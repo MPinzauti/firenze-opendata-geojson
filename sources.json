@@ -1,0 +1,16 @@
+{
+  "datasets": [
+    {
+      "id": "zcs",
+      "name": "ZCS Firenze",
+      "kml_url": "",
+      "output": "zcs.geojson"
+    },
+    {
+      "id": "parking",
+      "name": "Parcheggi",
+      "kml_url": "",
+      "output": "parcheggi.geojson"
+    }
+  ]
+}
