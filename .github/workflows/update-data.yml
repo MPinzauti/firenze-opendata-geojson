@@ -22,99 +22,102 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gdal-bin
 
-     - name: Generate GeoJSON
-  run: |
-    mkdir -p tmp docs
+      - name: Generate GeoJSON
+        run: |
+          mkdir -p tmp docs
 
-    python3 - <<'PY'
-    import json, os, subprocess, urllib.request, datetime, zipfile, shutil
+          python3 - <<'PY'
+          import json, os, subprocess, urllib.request, datetime, zipfile, shutil
 
-    def download(url: str, path: str):
-        # Segue redirect e salva su path
-        urllib.request.urlretrieve(url, path)
+          def download(url: str, path: str):
+              # Segue redirect e salva su path
+              urllib.request.urlretrieve(url, path)
 
-    def extract_kml_from_kmz(kmz_path: str, extract_dir: str) -> str:
-        # Estrae il primo .kml trovato (preferendo doc.kml se presente)
-        with zipfile.ZipFile(kmz_path, 'r') as z:
-            names = z.namelist()
-            kmls = [n for n in names if n.lower().endswith(".kml")]
-            if not kmls:
-                raise RuntimeError(f"No .kml inside KMZ: {kmz_path}")
+          def extract_kml_from_kmz(kmz_path: str, extract_dir: str) -> str:
+              # Estrae il primo .kml trovato (preferendo doc.kml se presente)
+              with zipfile.ZipFile(kmz_path, 'r') as z:
+                  names = z.namelist()
+                  kmls = [n for n in names if n.lower().endswith(".kml")]
+                  if not kmls:
+                      raise RuntimeError(f"No .kml inside KMZ: {kmz_path}")
 
-            # preferisci doc.kml se esiste
-            preferred = None
-            for n in kmls:
-                if os.path.basename(n).lower() == "doc.kml":
-                    preferred = n
-                    break
-            target = preferred or kmls[0]
+                  # preferisci doc.kml se esiste
+                  preferred = None
+                  for n in kmls:
+                      if os.path.basename(n).lower() == "doc.kml":
+                          preferred = n
+                          break
+                  target = preferred or kmls[0]
 
-            z.extract(target, extract_dir)
-            return os.path.join(extract_dir, target)
+                  z.extract(target, extract_dir)
+                  return os.path.join(extract_dir, target)
 
-    with open("sources.json", "r", encoding="utf-8") as f:
-        cfg = json.load(f)
+          with open("sources.json", "r", encoding="utf-8") as f:
+              cfg = json.load(f)
 
-    out_manifest = {
-        "generatedAt": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
-        "datasets": []
-    }
+          out_manifest = {
+              "generatedAt": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+              "datasets": []
+          }
 
-    for ds in cfg["datasets"]:
-        ds_id = ds.get("id")
-        name = ds.get("name", ds_id)
-        kml_url = ds.get("kml_url", "").strip()
-        out_name = ds.get("output", "").strip()
+          for ds in cfg.get("datasets", []):
+              ds_id = ds.get("id")
+              name = ds.get("name", ds_id)
+              source_url = ds.get("kml_url", "").strip()
+              out_name = ds.get("output", "").strip()
 
-        if not kml_url or not out_name or not ds_id:
-            print(f"SKIP: missing fields in dataset entry: {ds}")
-            continue
+              if not source_url or not out_name or not ds_id:
+                  print(f"SKIP: missing fields in dataset entry: {ds}")
+                  continue
 
-        # scarico in tmp/<id>.bin (può essere kml o kmz)
-        raw_path = os.path.join("tmp", f"{ds_id}.bin")
-        work_dir = os.path.join("tmp", f"{ds_id}_extracted")
+              # scarico in tmp/<id>.bin (può essere kml, kmz o geojson)
+              raw_path = os.path.join("tmp", f"{ds_id}.bin")
+              work_dir = os.path.join("tmp", f"{ds_id}_extracted")
 
-        # pulizia eventuale
-        if os.path.isdir(work_dir):
-            shutil.rmtree(work_dir)
-        os.makedirs(work_dir, exist_ok=True)
+              # pulizia eventuale
+              if os.path.isdir(work_dir):
+                  shutil.rmtree(work_dir)
+              os.makedirs(work_dir, exist_ok=True)
 
-        print(f"Downloading {ds_id} -> {raw_path}")
-        download(kml_url, raw_path)
+              print(f"Downloading {ds_id} -> {raw_path}")
+              download(source_url, raw_path)
 
-        # capisco se è KMZ (zip) o KML
-        input_path = None
-        is_zip = False
-        try:
-            is_zip = zipfile.is_zipfile(raw_path)
-        except Exception:
-            is_zip = False
+              out_path = os.path.join("docs", out_name)
 
-        if is_zip:
-            print(f"{ds_id}: detected KMZ/ZIP, extracting KML...")
-            input_path = extract_kml_from_kmz(raw_path, work_dir)
-        else:
-            # potrebbe essere già KML (testo xml)
-            # rinomino in .kml per chiarezza
-            input_path = os.path.join("tmp", f"{ds_id}.kml")
-            shutil.copyfile(raw_path, input_path)
+              # Se la sorgente è già GeoJSON, salvalo diretto
+              if "file_format=geojson" in source_url.lower():
+                  print(f"{ds_id}: source is GeoJSON, saving directly -> {out_path}")
+                  shutil.copyfile(raw_path, out_path)
+              else:
+                  # capisco se è KMZ (zip) o KML
+                  is_zip = False
+                  try:
+                      is_zip = zipfile.is_zipfile(raw_path)
+                  except Exception:
+                      is_zip = False
 
-        out_path = os.path.join("docs", out_name)
+                  if is_zip:
+                      print(f"{ds_id}: detected KMZ/ZIP, extracting KML...")
+                      input_path = extract_kml_from_kmz(raw_path, work_dir)
+                  else:
+                      # potrebbe essere già KML (testo xml)
+                      input_path = os.path.join("tmp", f"{ds_id}.kml")
+                      shutil.copyfile(raw_path, input_path)
 
-        print(f"Converting {input_path} -> {out_path}")
-        subprocess.check_call(["ogr2ogr", "-f", "GeoJSON", out_path, input_path])
+                  print(f"Converting {input_path} -> {out_path}")
+                  subprocess.check_call(["ogr2ogr", "-f", "GeoJSON", out_path, input_path])
 
-        out_manifest["datasets"].append({
-            "id": ds_id,
-            "name": name,
-            "url": out_name
-        })
+              out_manifest["datasets"].append({
+                  "id": ds_id,
+                  "name": name,
+                  "url": out_name
+              })
 
-    with open(os.path.join("docs", "datasets.json"), "w", encoding="utf-8") as f:
-        json.dump(out_manifest, f, ensure_ascii=False, indent=2)
+          with open(os.path.join("docs", "datasets.json"), "w", encoding="utf-8") as f:
+              json.dump(out_manifest, f, ensure_ascii=False, indent=2)
 
-    print("Done.")
-    PY
+          print("Done.")
+          PY
 
       - name: Commit & push if changed
         run: |
